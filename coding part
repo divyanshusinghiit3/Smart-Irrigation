@@ -1,0 +1,179 @@
+/*
+ * SMART IRRIGATION SYSTEM - ESP8266 CODE
+ * Features: Soil Moisture Monitoring, Automatic Irrigation, Cloud Connectivity
+ */
+
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
+
+// WiFi Credentials
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// ThingSpeak Configuration (Free IoT Cloud Platform)
+const char* server = "http://api.thingspeak.com/update";
+String apiKey = "YOUR_THINGSPEAK_API_KEY";
+
+// Pin Definitions
+const int SOIL_MOISTURE_PIN = A0;  // Analog pin for soil moisture sensor
+const int RELAY_PIN = D1;           // Digital pin for water pump relay
+const int LED_PIN = D4;             // Built-in LED for status
+
+// Thresholds
+const int DRY_THRESHOLD = 300;      // Below this = dry soil (0-1023 scale)
+const int WET_THRESHOLD = 600;      // Above this = wet soil
+const int PUMP_DURATION = 5000;     // Water pump run time in milliseconds
+
+// Variables
+int soilMoisture = 0;
+bool pumpStatus = false;
+unsigned long lastUpdate = 0;
+const long updateInterval = 15000;  // Send data every 15 seconds
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);  // Pump OFF initially
+  digitalWrite(LED_PIN, HIGH);   // LED OFF initially (inverted)
+  
+  Serial.println("\n\nSmart Irrigation System Starting...");
+  connectWiFi();
+}
+
+void loop() {
+  // Read soil moisture
+  soilMoisture = analogRead(SOIL_MOISTURE_PIN);
+  
+  // Control irrigation based on moisture level
+  controlIrrigation();
+  
+  // Send data to cloud at intervals
+  if (millis() - lastUpdate > updateInterval) {
+    sendToCloud();
+    lastUpdate = millis();
+  }
+  
+  // Print status to serial monitor
+  printStatus();
+  
+  delay(2000);
+}
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Blink LED
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    digitalWrite(LED_PIN, HIGH); // LED OFF (connected)
+  } else {
+    Serial.println("\nWiFi Connection Failed!");
+  }
+}
+
+void controlIrrigation() {
+  if (soilMoisture < DRY_THRESHOLD && !pumpStatus) {
+    // Soil is dry, turn ON pump
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(LED_PIN, LOW); // LED ON when pumping
+    pumpStatus = true;
+    Serial.println(">>> PUMP ON - Soil is DRY");
+    
+    delay(PUMP_DURATION);
+    
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(LED_PIN, HIGH);
+    pumpStatus = false;
+    Serial.println(">>> PUMP OFF");
+    
+  } else if (soilMoisture > WET_THRESHOLD && pumpStatus) {
+    // Soil is wet, ensure pump is OFF
+    digitalWrite(RELAY_PIN, LOW);
+    pumpStatus = false;
+    Serial.println(">>> PUMP OFF - Soil is WET");
+  }
+}
+
+void sendToCloud() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+    
+    // Prepare URL with sensor data
+    String url = String(server) + "?api_key=" + apiKey + 
+                 "&field1=" + String(soilMoisture) + 
+                 "&field2=" + String(pumpStatus ? 1 : 0);
+    
+    http.begin(client, url);
+    int httpCode = http.GET();
+    
+    if (httpCode > 0) {
+      Serial.println("Data sent to cloud successfully!");
+      Serial.print("HTTP Response: ");
+      Serial.println(httpCode);
+    } else {
+      Serial.println("Error sending data to cloud");
+    }
+    
+    http.end();
+  } else {
+    Serial.println("WiFi not connected. Reconnecting...");
+    connectWiFi();
+  }
+}
+
+void printStatus() {
+  Serial.println("------------------------");
+  Serial.print("Soil Moisture: ");
+  Serial.print(soilMoisture);
+  Serial.print(" | Status: ");
+  
+  if (soilMoisture < DRY_THRESHOLD) {
+    Serial.print("DRY");
+  } else if (soilMoisture > WET_THRESHOLD) {
+    Serial.print("WET");
+  } else {
+    Serial.print("NORMAL");
+  }
+  
+  Serial.print(" | Pump: ");
+  Serial.println(pumpStatus ? "ON" : "OFF");
+}
+
+/*
+ * ADDITIONAL FEATURES YOU CAN ADD:
+ * 
+ * 1. Manual Control via Blynk App:
+ *    - Add Blynk library and virtual pins
+ *    - Create button widget to manually control pump
+ * 
+ * 2. Multiple Sensor Support:
+ *    - Add more sensors (temperature, humidity)
+ *    - Use multiplexer for multiple soil sensors
+ * 
+ * 3. Scheduled Irrigation:
+ *    - Add RTC module
+ *    - Program specific watering times
+ * 
+ * 4. SMS Alerts:
+ *    - Integrate with Twilio API
+ *    - Send alerts when moisture is critical
+ * 
+ * 5. Local Web Server:
+ *    - Create ESP8266WebServer
+ *    - View data without internet
+ */
